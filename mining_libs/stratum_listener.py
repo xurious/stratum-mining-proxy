@@ -193,7 +193,7 @@ class StratumProxyService(GenericService):
             raise SubmitException(*exc.args)
 
         response_time = (time.time() - start) * 1000
-        log.info("[%dms] Share from '%s' accepted, diff %d" % (response_time, worker_name, DifficultySubscription.difficulty))
+        log.info("[%dms] Share from '%s' accepted, diff %.3g" % (response_time, worker_name, DifficultySubscription.difficulty))
         defer.returnValue(result)
 
     def get_transactions(self, *args):

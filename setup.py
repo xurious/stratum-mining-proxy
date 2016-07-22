@@ -14,15 +14,15 @@ from mining_libs import version
 args = {
     'name': 'stratum_mining_proxy',
     'version': version.VERSION,
-    'description': 'Getwork-compatible proxy for Stratum mining pools',
-    'author': 'slush',
-    'author_email': 'slush@satoshilabs.com',
-    'url': 'http://mining.bitcoin.cz/stratum-mining/',
+    'description': 'HTTP-compatible proxy for Sia Stratum mining pools',
+    'author': 'SiaMining',
+    'author_email': 'dev@siamining.com',
+    'url': 'http://siamining.com/stratum',
     'py_modules': ['mining_libs.client_service', 'mining_libs.getwork_listener',
                    'mining_libs.jobs',
                    'mining_libs.multicast_responder', 'mining_libs.stratum_listener',
                    'mining_libs.utils', 'mining_libs.version', 'mining_libs.worker_registry'],
-    'install_requires': ['setuptools>=0.6c11', 'twisted>=12.2.0', 'stratum>=0.2.15', 'argparse'],
+    'install_requires': ['setuptools>=0.6c11', 'twisted>=12.2.0', 'stratum>=0.2.15', 'argparse', 'pyblake2'],
     'scripts': ['mining_proxy.py'],
 }
 

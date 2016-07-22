@@ -37,7 +37,7 @@ class Job(object):
         job.merkle_branch = [ binascii.unhexlify(tx) for tx in merkle_branch ]
         job.version = version
         job.nbits = nbits
-        job.ntime_delta = int(ntime, 16) - int(time.time()) 
+        job.ntime_delta = int(binascii.hexlify(binascii.unhexlify(ntime)[::-1]), 16) - int(time.time())
         return job
 
     def increase_extranonce2(self):
@@ -50,17 +50,14 @@ class Job(object):
     def build_merkle_root(self, coinbase_hash):
         merkle_root = coinbase_hash
         for h in self.merkle_branch:
-            merkle_root = utils.doublesha(merkle_root + h)
+            merkle_root = utils.gen_hash('\x01' + h + merkle_root)
         return merkle_root
     
     def serialize_header(self, merkle_root, ntime, nonce):
-        r =  self.version
-        r += self.prevhash
+        r = binascii.unhexlify(self.prevhash)
+        r += struct.pack("<Q", nonce)
+        r += struct.pack("<Q", ntime)
         r += merkle_root
-        r += binascii.hexlify(struct.pack(">I", ntime))
-        r += self.nbits
-        r += binascii.hexlify(struct.pack(">I", nonce))
-        r += '000000800000000000000000000000000000000000000000000000000000000000000000000000000000000080020000' # padding    
         return r            
         
 class JobRegistry(object):   
@@ -74,10 +71,9 @@ class JobRegistry(object):
         self.extranonce2_size = None
         
         self.target = 0
-        self.target_hex = ''
+        self.target_bin = ''
         self.difficulty = 1
         self.set_difficulty(1)
-        self.target1_hex = self.target_hex
         
         # Relation between merkle and job
         self.merkle_to_job= weakref.WeakValueDictionary()
@@ -96,7 +92,7 @@ class JobRegistry(object):
     def set_difficulty(self, new_difficulty):
         dif1 = 0x00000000ffff0000000000000000000000000000000000000000000000000000
         self.target = int(dif1 / new_difficulty)
-        self.target_hex = binascii.hexlify(utils.uint256_to_str(self.target))
+        self.target_bin = utils.uint256_to_str(self.target)
         self.difficulty = new_difficulty
         
     def build_full_extranonce(self, extranonce2):
@@ -148,7 +144,7 @@ class JobRegistry(object):
         
     def get_job_from_header(self, header):
         '''Lookup for job and extranonce2 used for given blockheader (in hex)'''
-        merkle_hash = header[72:136].lower()
+        merkle_hash = header[48:80]
         job = self.merkle_to_job[merkle_hash]
         extranonce2 = job.merkle_to_extranonce2[merkle_hash]
         return (job, extranonce2)
@@ -168,10 +164,10 @@ class JobRegistry(object):
         coinbase_bin = job.build_coinbase(extranonce)
         
         # 4. Calculate coinbase hash
-        coinbase_hash = utils.doublesha(coinbase_bin)
+        coinbase_hash = utils.gen_hash('\x00' + coinbase_bin)
         
         # 5. Calculate merkle root
-        merkle_root = binascii.hexlify(utils.reverse_hash(job.build_merkle_root(coinbase_hash)))
+        merkle_root = job.build_merkle_root(coinbase_hash)
                 
         # 6. Generate current ntime
         ntime = int(time.time()) + job.ntime_delta
@@ -182,33 +178,24 @@ class JobRegistry(object):
         # 8. Register job params
         self.register_merkle(job, merkle_root, extranonce2)
         
-        # 9. Prepare hash1, calculate midstate and fill the response object
-        header_bin = binascii.unhexlify(block_header)[:64]
-        hash1 = "00000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000010000"
-
-        result = {'data': block_header,
-                'hash1': hash1}
-        
-        result['target'] = self.target1_hex
+        # 9. Fill the response object
+        result = self.target_bin + block_header
     
         return result            
         
     def submit(self, header, worker_name):            
         # Drop unused padding
-        header = header[:160]
+        header = header[:80]
 
         # 1. Check if blockheader meets requested difficulty
-        header_bin = binascii.unhexlify(header[:160])
-        rev = ''.join([ header_bin[i*4:i*4+4][::-1] for i in range(0, 20) ])
-        hash_bin = utils.doublesha(rev)
-        block_hash = ''.join([ hash_bin[i*4:i*4+4][::-1] for i in range(0, 8) ])
+        hash_bin = utils.gen_hash(header)
+        block_hash = hash_bin
         
-        #log.info('!!! %s' % header[:160])
         log.info("Submitting %s" % utils.format_hash(binascii.hexlify(block_hash)))
         
-        if utils.uint256_from_str(hash_bin) > self.target:
-            log.debug("Share is below expected target")
-            return True
+        #if utils.uint256_from_str(hash_bin) > self.target:
+        #    log.debug("Share does not meet expected target")
+        #    return True
         
         # 2. Lookup for job and extranonce used for creating given block header
         try:
@@ -221,10 +208,10 @@ class JobRegistry(object):
         extranonce2_hex = binascii.hexlify(self.extranonce2_padding(extranonce2))
 
         # 4. Parse ntime and nonce from header
-        ntimepos = 17*8 # 17th integer in datastring
-        noncepos = 19*8 # 19th integer in datastring       
-        ntime = header[ntimepos:ntimepos+8] 
-        nonce = header[noncepos:noncepos+8]
+        ntimepos = 5*8 # 4th integer in datastring
+        noncepos = 4*8 # 5th integer in datastring
+        ntime = binascii.hexlify(header[ntimepos:ntimepos+8])
+        nonce = binascii.hexlify(header[noncepos:noncepos+8])
             
         # 5. Submit share to the pool
         return self.f.rpc('mining.submit', [worker_name, job.job_id, extranonce2_hex, ntime, nonce])

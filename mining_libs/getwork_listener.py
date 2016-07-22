@@ -1,9 +1,12 @@
 import json
+import re
 import time
 
 from twisted.internet import defer
 from twisted.web.resource import Resource
 from twisted.web.server import NOT_DONE_YET
+
+from utils import username_format
 
 import stratum.logger
 log = stratum.logger.get_logger('proxy')
@@ -21,115 +24,114 @@ class Root(Resource):
         self.custom_user = custom_user
         self.custom_password = custom_password
         
-    def json_response(self, msg_id, result):
-        resp = json.dumps({'id': msg_id, 'result': result, 'error': None})
+    def write_response(self, request, resp):
+        request.write(resp);
         #print "RESPONSE", resp
-        return resp
+        request.finish()
+
+    def write_success(self, request):
+        request.setResponseCode(204)
+        request.finish()
     
-    def json_error(self, msg_id, code, message):
-        resp = json.dumps({'id': msg_id, 'result': None, 'error': {'code': code, 'message': message}})
+    def write_error(self, request, message):
+        resp = json.dumps({'message': message})
+        request.setResponseCode(400)
+        request.setHeader('content-type', 'application/json')
+        request.write(resp);
         #print "ERROR", resp
-        return resp         
+        request.finish()
     
-    def _on_submit(self, result, request, msg_id, blockheader, worker_name, start_time):
+    def _on_submit(self, result, request, blockheader, worker_name, start_time):
         response_time = (time.time() - start_time) * 1000
         if result == True:
-            log.warning("[%dms] Share from '%s' accepted, diff %d" % (response_time, worker_name, self.job_registry.difficulty))
+            log.warning("[%dms] Share from '%s' accepted, diff %.3g" % (response_time, username_format(worker_name), self.job_registry.difficulty))
         else:
-            log.warning("[%dms] Share from '%s' REJECTED" % (response_time, worker_name))
+            log.warning("[%dms] Share from '%s' REJECTED" % (response_time, username_format(worker_name)))
          
         try:   
-            request.write(self.json_response(msg_id, result))
-            request.finish()
+            if result:
+                self.write_success(request)
+            else:
+                self.write_error(request, 'rejected')
         except RuntimeError:
             # RuntimeError is thrown by Request class when
             # client is disconnected already
             pass
         
-    def _on_submit_failure(self, failure, request, msg_id, blockheader, worker_name, start_time):
+    def _on_submit_failure(self, failure, request, blockheader, worker_name, start_time):
         response_time = (time.time() - start_time) * 1000
         
         # Submit for some reason failed
         try:
-            request.write(self.json_response(msg_id, False))
-            request.finish()
+            self.write_error(request, failure.getErrorMessage())
         except RuntimeError:
             # RuntimeError is thrown by Request class when
             # client is disconnected already
             pass
 
         log.warning("[%dms] Share from '%s' REJECTED: %s" % \
-                 (response_time, worker_name, failure.getErrorMessage()))
+                 (response_time, username_format(worker_name), failure.getErrorMessage()))
         
     def _on_authorized(self, is_authorized, request, worker_name):
-        data = json.loads(request.content.read())
+        data = request.content.read()
         
         if not is_authorized:
-            request.write(self.json_error(data.get('id', 0), -1, "Bad worker credentials"))
-            request.finish()
+            self.write_error(request, "Bad worker credentials")
             return
-                
+
         if not self.job_registry.last_job:
             log.warning('Getworkmaker is waiting for a job...')
-            request.write(self.json_error(data.get('id', 0), -1, "Getworkmake is waiting for a job..."))
-            request.finish()
+            self.write_error(request, "Getworkmaker is waiting for a job...")
             return
 
-        if data['method'] == 'getwork':
-            if 'params' not in data or not len(data['params']):
-                                
-                # getwork request
-                log.info("Worker '%s' asks for new work" % worker_name)
-                extensions = request.getHeader('x-mining-extensions')
-                request.write(self.json_response(data.get('id', 0), self.job_registry.getwork()))
-                request.finish()
-                return
-            
-            else:
-                
-                # submit
-                d = defer.maybeDeferred(self.job_registry.submit, data['params'][0], worker_name)
+        if request.method == 'GET':
 
-                start_time = time.time()
-                d.addCallback(self._on_submit, request, data.get('id', 0), data['params'][0][:160], worker_name, start_time)
-                d.addErrback(self._on_submit_failure, request, data.get('id', 0), data['params'][0][:160], worker_name, start_time)
-                return
-            
-        request.write(self.json_error(data.get('id'), -1, "Unsupported method '%s'" % data['method']))
-        request.finish()
+            # getwork request
+            log.info("Worker '%s' asks for new work" % username_format(worker_name))
+            self.write_response(request, self.job_registry.getwork())
+            return
+
+        else:
+
+            # submit
+            d = defer.maybeDeferred(self.job_registry.submit, data, worker_name)
+
+            start_time = time.time()
+            d.addCallback(self._on_submit, request, data, worker_name, start_time)
+            d.addErrback(self._on_submit_failure, request, data, worker_name, start_time)
+            return
+
+        self.write_error(request, "Unsupported method '%s'" % data['method'])
         
     def _on_failure(self, failure, request):
-        request.write(self.json_error(0, -1, "Unexpected error during authorization"))
-        request.finish()
+        self.write_error(request, "Unexpected error during authorization")
         raise failure
         
     def _prepare_headers(self, request): 
-        request.setHeader('content-type', 'application/json')
+        request.setHeader('x-mining-extensions', 'longpoll')
         
-        request.setHeader('x-long-polling', '/lp')
-        
-    def _on_lp_broadcast(self, _, request):        
-        try:
-            worker_name = request.getUser()
-        except:
-            worker_name = '<unknown>'
-            
-        log.info("LP broadcast for worker '%s'" % worker_name)
-        extensions = request.getHeader('x-mining-extensions')
-        payload = self.json_response(0, self.job_registry.getwork())
+    def _on_lp_broadcast(self, _, request, worker_name):
+        log.info("LP broadcast for worker '%s'" % username_format(worker_name))
         
         try:
-            request.write(payload)
-            request.finish()
+            self.write_response(request, self.job_registry.getwork())
         except RuntimeError:
             # RuntimeError is thrown by Request class when
             # client is disconnected already
             pass
         
     def render_POST(self, request):        
+        return self.render_GET(request)
+
+    def render_GET(self, request):
         self._prepare_headers(request)
 
-        (worker_name, password) = (request.getUser(), request.getPassword())
+        worker_name = request.args['address'][0] if 'address' in request.args else ''
+        if 'worker' in request.args:
+            worker_name += '.' + request.args['worker'][0]
+        if 'user' in request.args:
+            worker_name = request.args['user'][0]
+        password = request.args['password'][0] if 'password' in request.args else ''
 
         if self.custom_user:
             worker_name = self.custom_user
@@ -138,33 +140,16 @@ class Root(Resource):
         if worker_name == '':
             log.warning("Authorization required")
             request.setResponseCode(401)
-            request.setHeader('WWW-Authenticate', 'Basic realm="stratum-mining-proxy"')
             return "Authorization required"
         
         self._prepare_headers(request)
         
-        if request.path.startswith('/lp'):
-            log.info("Worker '%s' subscribed for LP" % worker_name)
-            self.job_registry.on_block.addCallback(self._on_lp_broadcast, request)
+        if request.method == 'GET' and re.search('[?&]longpoll(=|&|$)', request.uri):
+            log.info("Worker '%s' subscribed for LP" % username_format(worker_name))
+            self.job_registry.on_block.addCallback(self._on_lp_broadcast, request, worker_name)
             return NOT_DONE_YET
        
         d = defer.maybeDeferred(self.workers.authorize, worker_name, password)
         d.addCallback(self._on_authorized, request, worker_name)
         d.addErrback(self._on_failure, request)    
-        return NOT_DONE_YET
-
-    def render_GET(self, request):
-        self._prepare_headers(request)
-            
-        try:
-            worker_name = request.getUser()
-        except:
-            worker_name = '<unknown>'
-                
-        if self.custom_user:
-            worker_name = self.custom_user
-            password = self.custom_password                
-                
-        log.info("Worker '%s' subscribed for LP at %s" % (worker_name, request.path))
-        self.job_registry.on_block.addCallback(self._on_lp_broadcast, request)
         return NOT_DONE_YET
