@@ -11,22 +11,6 @@ import utils
 import stratum.logger
 log = stratum.logger.get_logger('proxy')
 
-# This fix py2exe issue with packaging the midstate module
-from midstate import calculateMidstate as __unusedimport
-
-try:
-    from midstatec import test as midstateTest, midstate as calculateMidstate
-    if not midstateTest():
-        log.warning("midstate library didn't passed self test!")
-        raise ImportError("midstatec not usable")
-    log.info("Using C extension for midstate speedup. Good!")
-except ImportError:
-    log.info("C extension for midstate not available. Using default implementation instead.")
-    try:    
-        from midstate import calculateMidstate
-    except ImportError:
-        calculateMidstate = None
-        log.exception("No midstate generator available. Some old miners won't work properly.")
 
 class Job(object):
     def __init__(self):
@@ -80,13 +64,9 @@ class Job(object):
         return r            
         
 class JobRegistry(object):   
-    def __init__(self, f, cmd, no_midstate, real_target, use_old_target=False, scrypt_target=False):
+    def __init__(self, f, cmd):
         self.f = f
         self.cmd = cmd # execute this command on new block
-        self.scrypt_target = scrypt_target # calculate target for scrypt algorithm instead of sha256
-        self.no_midstate = no_midstate # Indicates if calculate midstate for getwork
-        self.real_target = real_target # Indicates if real stratum target will be propagated to miners
-        self.use_old_target = use_old_target # Use 00000000fffffff...f instead of correct 00000000ffffffff...0 target for really old miners
         self.jobs = []        
         self.last_job = None
         self.extranonce1 = None
@@ -114,10 +94,7 @@ class JobRegistry(object):
         self.extranonce1_bin = binascii.unhexlify(extranonce1)
         
     def set_difficulty(self, new_difficulty):
-        if self.scrypt_target:
-            dif1 = 0x0000ffff00000000000000000000000000000000000000000000000000000000
-        else:
-            dif1 = 0x00000000ffff0000000000000000000000000000000000000000000000000000
+        dif1 = 0x00000000ffff0000000000000000000000000000000000000000000000000000
         self.target = int(dif1 / new_difficulty)
         self.target_hex = binascii.hexlify(utils.uint256_to_str(self.target))
         self.difficulty = new_difficulty
@@ -176,7 +153,7 @@ class JobRegistry(object):
         extranonce2 = job.merkle_to_extranonce2[merkle_hash]
         return (job, extranonce2)
         
-    def getwork(self, no_midstate=True):
+    def getwork(self):
         '''Miner requests for new getwork'''
         
         job = self.last_job # Pick the latest job from pool
@@ -212,17 +189,8 @@ class JobRegistry(object):
         result = {'data': block_header,
                 'hash1': hash1}
         
-        if self.use_old_target:
-            result['target'] = 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000'
-        elif self.real_target:
-            result['target'] = self.target_hex
-        else:
-            result['target'] = self.target1_hex
+        result['target'] = self.target1_hex
     
-        if calculateMidstate and not (no_midstate or self.no_midstate):
-            # Midstate module not found or disabled
-            result['midstate'] = binascii.hexlify(calculateMidstate(header_bin))
-            
         return result            
         
     def submit(self, header, worker_name):            

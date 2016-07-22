@@ -12,14 +12,12 @@ class Root(Resource):
     isLeaf = True
     
     def __init__(self, job_registry, workers, stratum_host, stratum_port,
-                 custom_stratum=None, custom_lp=None, custom_user=None, custom_password=''):
+                 custom_user=None, custom_password=''):
         Resource.__init__(self)
         self.job_registry = job_registry
         self.workers = workers
         self.stratum_host = stratum_host
         self.stratum_port = stratum_port
-        self.custom_stratum = custom_stratum
-        self.custom_lp = custom_lp
         self.custom_user = custom_user
         self.custom_password = custom_password
         
@@ -83,8 +81,7 @@ class Root(Resource):
                 # getwork request
                 log.info("Worker '%s' asks for new work" % worker_name)
                 extensions = request.getHeader('x-mining-extensions')
-                no_midstate =  extensions and 'midstate' in extensions
-                request.write(self.json_response(data.get('id', 0), self.job_registry.getwork(no_midstate=no_midstate)))
+                request.write(self.json_response(data.get('id', 0), self.job_registry.getwork()))
                 request.finish()
                 return
             
@@ -109,17 +106,7 @@ class Root(Resource):
     def _prepare_headers(self, request): 
         request.setHeader('content-type', 'application/json')
         
-        if self.custom_stratum:
-            request.setHeader('x-stratum', self.custom_stratum)    
-        elif self.stratum_port:
-            request.setHeader('x-stratum', 'stratum+tcp://%s:%d' % (request.getRequestHostname(), self.stratum_port))
-        
-        if self.custom_lp:
-            request.setHeader('x-long-polling', self.custom_lp)
-        else:
-            request.setHeader('x-long-polling', '/lp')
-            
-        request.setHeader('x-roll-ntime', 1)
+        request.setHeader('x-long-polling', '/lp')
         
     def _on_lp_broadcast(self, _, request):        
         try:
@@ -129,8 +116,7 @@ class Root(Resource):
             
         log.info("LP broadcast for worker '%s'" % worker_name)
         extensions = request.getHeader('x-mining-extensions')
-        no_midstate =  extensions and 'midstate' in extensions
-        payload = self.json_response(0, self.job_registry.getwork(no_midstate=no_midstate))
+        payload = self.json_response(0, self.job_registry.getwork())
         
         try:
             request.write(payload)
