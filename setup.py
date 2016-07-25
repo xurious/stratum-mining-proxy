@@ -1,8 +1,6 @@
 #!/usr/bin/env python
-from distribute_setup import use_setuptools
-use_setuptools()
 
-from setuptools import setup, Extension
+from setuptools import setup
 import sys, os
 try:
     import py2exe
@@ -22,7 +20,7 @@ args = {
                    'mining_libs.jobs',
                    'mining_libs.multicast_responder', 'mining_libs.stratum_listener',
                    'mining_libs.utils', 'mining_libs.version', 'mining_libs.worker_registry'],
-    'install_requires': ['setuptools>=0.6c11', 'twisted>=12.2.0', 'stratum>=0.2.15', 'argparse', 'pyblake2'],
+    'install_requires': ['setuptools>=0.6c11', 'twisted>=12.2.0', 'autobahn', 'ecdsa', 'argparse', 'pyblake2'],
     'scripts': ['mining_proxy.py'],
 }
 
