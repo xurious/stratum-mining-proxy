@@ -9,7 +9,7 @@ This is a port for Sia of the original Stratum mining proxy by Slush.
 Installation on Windows
 -----------------------
 
-1. Download official Windows binaries (EXE) from http://siamining.com/media/download/mining_proxy.exe
+1. Download official Windows binaries (EXE) from http://siamining.com/files/mining_proxy.exe
 2. Open downloaded file. It will open console window. Using default settings, proxy connects to SiaMining's pool interface
 3. If you want to connect to another pool or change other proxy settings, type "mining_proxy.exe --help" in console window.
 
